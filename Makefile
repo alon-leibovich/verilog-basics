@@ -8,6 +8,15 @@
 IV   = iverilog -g2005
 VVP  = vvp
 
+# ---------------- Day 1 : first modules ----------------
+and:
+	$(IV) -o sim_and.out and_gate.v and_gate_tb.v
+	$(VVP) sim_and.out
+
+mux2:
+	$(IV) -o sim_mux2.out mux2_1bit.v mux2_tb.v
+	$(VVP) sim_mux2.out
+
 # ---------------- Day 2 : combinational ----------------
 mux4:
 	$(IV) -o sim_mux4.out mux4.v tb_mux4.v
@@ -54,13 +63,14 @@ fifo:
 	$(VVP) sim_fifo.out
 
 # ---------------- aggregates ----------------
+day1: and mux2
 day2: mux4 decoder adder
 day3: dff shift counter
 day4: seq traffic
 day5: alu fifo
-all:  day2 day3 day4 day5
+all:  day1 day2 day3 day4 day5
 
 clean:
 	rm -f *.out *.vcd
 
-.PHONY: all day2 day3 day4 day5 mux4 decoder adder dff shift counter seq traffic alu fifo clean
+.PHONY: all day1 and mux2 day2 day3 day4 day5 mux4 decoder adder dff shift counter seq traffic alu fifo clean

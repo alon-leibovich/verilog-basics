@@ -23,8 +23,8 @@ module decoder3to8 (
 );
 
     // ------------------------------------------------------------------
-    // TODO 1 - גרסה עם always @(*) ו-case
-    //
+    // always @(*) with a fully covered case - no inferred latches
+    // ------------------------------------------------------------------
     always @(*) begin
         if (!en)
              y = 8'b0000_0000;
@@ -43,16 +43,11 @@ module decoder3to8 (
     end
 
 
-
-
     // ------------------------------------------------------------------
-    // TODO 2 (בונוס, 2 דקות) - אחרי שהגרסה למעלה עוברת, נסה לכתוב את
-    // אותו הדבר בשורה אחת בעזרת אופרטור ההזזה:
+    // Design note: a decoder is a shift of 1 by the encoded amount.
+    // The same hardware in one line (with y declared as a wire):
     //
     //     assign y = en ? (8'b1 << sel) : 8'b0;
-    //
-    // (תצטרך לשנות את y ל-wire). שים לב שזה בדיוק אותה חומרה.
-    // תובנה טובה לראיון: "decoder הוא shift של 1 בכמות המקודדת".
     // ------------------------------------------------------------------
 
 endmodule

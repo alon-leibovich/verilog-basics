@@ -1,0 +1,494 @@
+diff --git a/Makefile b/Makefile
+index 0e24a6e..2a7a20f 100644
+--- a/Makefile
++++ b/Makefile
+@@ -8,6 +8,15 @@
+ IV   = iverilog -g2005
+ VVP  = vvp
+ 
++# ---------------- Day 1 : first modules ----------------
++and:
++	$(IV) -o sim_and.out and_gate.v and_gate_tb.v
++	$(VVP) sim_and.out
++
++mux2:
++	$(IV) -o sim_mux2.out mux2_1bit.v mux2_tb.v
++	$(VVP) sim_mux2.out
++
+ # ---------------- Day 2 : combinational ----------------
+ mux4:
+ 	$(IV) -o sim_mux4.out mux4.v tb_mux4.v
+@@ -54,13 +63,14 @@ fifo:
+ 	$(VVP) sim_fifo.out
+ 
+ # ---------------- aggregates ----------------
++day1: and mux2
+ day2: mux4 decoder adder
+ day3: dff shift counter
+ day4: seq traffic
+ day5: alu fifo
+-all:  day2 day3 day4 day5
++all:  day1 day2 day3 day4 day5
+ 
+ clean:
+ 	rm -f *.out *.vcd
+ 
+-.PHONY: all day2 day3 day4 day5 mux4 decoder adder dff shift counter seq traffic alu fifo clean
++.PHONY: all day1 and mux2 day2 day3 day4 day5 mux4 decoder adder dff shift counter seq traffic alu fifo clean
+diff --git a/README.md b/README.md
+index 1f27e57..a52b582 100644
+--- a/README.md
++++ b/README.md
+@@ -1,7 +1,8 @@
+ # verilog-basics
+ 
+ Digital design fundamentals in Verilog-2001 — combinational and sequential building
+-blocks, each written from scratch and verified with a self-checking testbench.
++blocks, from gates up to an ALU and a FIFO. From Day 2 on, every module is verified with a
++self-checking testbench against an independent reference model.
+ 
+ Simulated with Icarus Verilog (`iverilog` + `vvp`), waveforms inspected in a VCD viewer.
+ 
+@@ -52,21 +53,12 @@ stay clear of the active edge and avoid races between driving and sampling.
+ 
+ ![Synchronous vs asynchronous reset — the short reset pulse between clock edges](sync_vs_async_reset.png)
+ 
+-## Running
+-
+-```bash
+-make all        # compile + simulate everything
+-make day2       # combinational blocks only
+-make day3       # sequential blocks only
+-make counter    # a single module
+-```
+-
+-## Design notes
++### Design notes
+ 
+ - Ripple-carry delay grows linearly with N — the carry chain is the critical path.
+   Faster adders (carry-lookahead, carry-select) trade area for delay using the
+   generate/propagate formulation `c[i+1] = g[i] | (p[i] & c[i])`.
+-  The adder is reused as the arithmetic core of the ALU and of the single-cycle CPU project.
++  The adder is reused as the arithmetic core of the ALU (Day 5).
+ - Every clocked block uses non-blocking assignment (`<=`); every combinational block uses
+   blocking (`=`). Mixing them changes the synthesized hardware without any compiler warning.
+ - Asynchronous reset is asserted immediately but must be de-asserted synchronously in real
+@@ -75,10 +67,6 @@ make counter    # a single module
+   produces it instead of lagging a cycle behind.
+ - Ports are connected by name, never by position.
+ 
+-## Tools
+-
+-`Icarus Verilog` · `VCD waveform viewer` · `make` · `Git`
+-
+ ## Day 4 — Finite State Machines
+ 
+ Both designs use the standard three-block FSM style: a clocked state register, a
+@@ -158,3 +146,24 @@ about: `8 operations × 256 × 256`, no sampling and no assumptions.
+   cycle is the normal case for a FIFO under load; using `else` would halve the throughput.
+ 
+ ![FIFO full: writes are ignored while count stays at 8](fifo_full_blocking.png)
++
++## Running
++
++```bash
++make all        # compile and simulate everything
++make day5       # one day's modules (day1 ... day5)
++make alu        # a single module
++make clean      # remove build artifacts
++```
++
++## Tools
++
++`Icarus Verilog` · `VCD waveform viewer` · `make` · `Git`
++
++## Roadmap
++
++Planned next steps, building on the modules above:
++
++- [ ] Register file and instruction memory
++- [ ] Single-cycle RISC-V (RV32I subset) CPU, using the ALU as its arithmetic core
++- [ ] Five-stage pipelined version with forwarding and hazard detection
+diff --git a/alu.v b/alu.v
+index 60019fb..1b8c15c 100644
+--- a/alu.v
++++ b/alu.v
+@@ -1,13 +1,8 @@
+ //=============================================================================
+ // alu.v  -  parameterized Arithmetic Logic Unit with status flags
+ //
+-// Day 5 / Week 1
+-//
+-// This is the single most important module of the week. It becomes the
+-// arithmetic core of the single-cycle CPU in Week 3. Do not throw it away.
+-//
+-// It reuses ripple_carry_adder from Day 2 as a sub-module: one adder handles
+-// both ADD and SUB, because subtraction is addition of the two's complement.
++// Reuses ripple_carry_adder (Day 2) as a sub-module: one adder handles both
++// ADD and SUB, because subtraction is addition of the two's complement.
+ //
+ //-----------------------------------------------------------------------------
+ // OPERATION TABLE
+@@ -70,97 +65,87 @@ module alu #(
+ 
+ 
+     // =====================================================================
+-
+-      assign sub_mode = (op == OP_SUB) | (op == OP_SLT);
+-    //
+-
+-    // =====================================================================
+-    // TODO 2  -  two's complement trick
+-    //
+-      assign b_eff = b ^ {N{sub_mode}};  // invert b when subtracting;t
+-    //
+-    //   a - b  ==  a + (~b) + 1
++    //  Subtract mode
+     //
+-    // So: invert every bit of b when subtracting, and feed 1 into the
+-    // adder's carry-in. When adding, pass b through unchanged.
+-    //
+-    // Hint: {N{sub_mode}} replicates sub_mode into an N-bit mask.
+-    //       XOR with all-ones inverts; XOR with all-zeros passes through.
++    // SLT also subtracts: a < b is decided from the sign of a - b.
+     // =====================================================================
++    assign sub_mode = (op == OP_SUB) | (op == OP_SLT);
+ 
+ 
+     // =====================================================================
++    //  Two's complement:  a - b  ==  a + (~b) + 1
++    //
++    // b is inverted conditionally: XOR with an all-ones mask inverts it,
++    // XOR with all-zeros passes it through. The "+1" costs nothing - it
++    // enters through the adder's carry-in.
++    // =====================================================================
++    assign b_eff = b ^ {N{sub_mode}};
+ 
+-      ripple_carry_adder #( .N(N) ) u_add (
+-          .a    ( a ),
+-          .b    ( b_eff ),
+-          .cin  ( sub_mode ), // 1 when subtracting, 0 when adding
+-          .sum  ( sum ),
+-          .cout ( cout )
+-      );
+-
++    ripple_carry_adder #( .N(N) ) u_add (
++        .a    ( a        ),
++        .b    ( b_eff    ),
++        .cin  ( sub_mode ),   // 1 when subtracting, 0 when adding
++        .sum  ( sum      ),
++        .cout ( cout     )
++    );
+ 
+ 
+     // =====================================================================
+-  
+-    //
+-    assign ovf =  a[N-1] == b_eff[N-1] && sum[N-1] != a[N-1];
++    //  Signed overflow
+     //
+-    // Signed overflow happens when two operands with the SAME sign produce
+-    // a result with a DIFFERENT sign. Adding two positives cannot give a
+-    // negative; adding two negatives cannot give a positive.
+- 
++    // Two operands with the SAME sign produce a result with a DIFFERENT
++    // sign. Adding two positives cannot give a negative, and adding two
++    // negatives cannot give a positive. b_eff is used so the same check
++    // covers subtraction.
+     // =====================================================================
++    assign ovf = (a[N-1] == b_eff[N-1]) && (sum[N-1] != a[N-1]);
+ 
+-      assign slt_bit = sum[N-1] ^ ovf ; ;
++
++    // =====================================================================
++    //  Set-less-than (signed)
+     //
+     // After computing a - b:
+     //   - with no overflow, a < b  <=>  the result is negative
+-    //   - with overflow, the sign bit lies, so the answer flips
+-  
+-    // This is exactly how MIPS implements slt. Worth remembering - it is a
+-    // classic interview question.
++    //   - with overflow, the sign bit is wrong, so the answer flips
++    // This is how MIPS implements slt, with no separate comparator.
+     // =====================================================================
++    assign slt_bit = sum[N-1] ^ ovf;
+ 
+ 
+     // =====================================================================
+-    //   -  the result multiplexer
++    //  Result multiplexer
+     //
+-      always @(*) begin
+-          case (op)
+-              OP_ADD, OP_SUB: result = sum;
+-              OP_AND:         result = a & b;
+-              OP_OR:          result = a | b;
+-              OP_XOR:         result = a ^ b;
+-              OP_SLT:         result = { {N-1{1'b0}}, slt_bit };
+-              OP_SLL:         result = a << b[2:0];
+-              OP_SRL:         result = a >> b[2:0];
+-              default:        result = {N{1'b0}};
+-          endcase
+-      end
+-
+-    // The shift amount is b[2:0], the low 3 bits. Same idea as the 5-bit
+-    // shamt field in MIPS for 32-bit words.
++    // The shift amount is b[2:0], enough for an 8-bit word - the same idea
++    // as the 5-bit shamt field in MIPS for 32-bit words.
+     // =====================================================================
++    always @(*) begin
++        case (op)
++            OP_ADD, OP_SUB: result = sum;
++            OP_AND:         result = a & b;
++            OP_OR:          result = a | b;
++            OP_XOR:         result = a ^ b;
++            OP_SLT:         result = { {N-1{1'b0}}, slt_bit };
++            OP_SLL:         result = a << b[2:0];
++            OP_SRL:         result = a >> b[2:0];
++            default:        result = {N{1'b0}};
++        endcase
++    end
+ 
+ 
+-    //  the flags
+-    //
+-      assign is_arith = (op == OP_ADD) || (op == OP_SUB);
+-    //
+-      assign zero     = ~|result ;      // is result all zeros?
+-      assign negative = result[N-1] ;      // the MSB of result
+-      assign carry    = is_arith ? cout : 1'b0;
+-      assign overflow = is_arith ? ovf  : 1'b0;
+-    //
+-    // For zero, a reduction operator is the cleanest form:
+-    //     |result   is 1 if ANY bit is set
+-    // so NOT of that is "all bits are zero".
++    // =====================================================================
++    //  Flags
+     //
+-    // carry and overflow are meaningless for AND / OR / XOR / shifts, so we
+-    // force them low instead of leaking whatever the adder happened to do.
+-    // Defined behaviour beats accidental behaviour.
++    // zero uses a reduction OR: |result is 1 if any bit is set.
++    // carry and overflow are meaningless for logic and shift operations,
++    // so they are forced low instead of exposing whatever the adder
++    // happened to compute. Defined behaviour beats accidental behaviour.
+     // =====================================================================
++    assign is_arith = (op == OP_ADD) || (op == OP_SUB);
++
++    assign zero     = ~|result;
++    assign negative = result[N-1];
++    assign carry    = is_arith ? cout : 1'b0;
++    assign overflow = is_arith ? ovf  : 1'b0;
+ 
+ endmodule
+ 
+diff --git a/decoder3to8.v b/decoder3to8.v
+index a30e0e8..0d9c1db 100644
+--- a/decoder3to8.v
++++ b/decoder3to8.v
+@@ -23,8 +23,8 @@ module decoder3to8 (
+ );
+ 
+     // ------------------------------------------------------------------
+-    // TODO 1 - גרסה עם always @(*) ו-case
+-    //
++    // always @(*) with a fully covered case - no inferred latches
++    // ------------------------------------------------------------------
+     always @(*) begin
+         if (!en)
+              y = 8'b0000_0000;
+@@ -43,16 +43,11 @@ module decoder3to8 (
+     end
+ 
+ 
+-
+-
+     // ------------------------------------------------------------------
+-    // TODO 2 (בונוס, 2 דקות) - אחרי שהגרסה למעלה עוברת, נסה לכתוב את
+-    // אותו הדבר בשורה אחת בעזרת אופרטור ההזזה:
++    // Design note: a decoder is a shift of 1 by the encoded amount.
++    // The same hardware in one line (with y declared as a wire):
+     //
+     //     assign y = en ? (8'b1 << sel) : 8'b0;
+-    //
+-    // (תצטרך לשנות את y ל-wire). שים לב שזה בדיוק אותה חומרה.
+-    // תובנה טובה לראיון: "decoder הוא shift של 1 בכמות המקודדת".
+     // ------------------------------------------------------------------
+ 
+ endmodule
+diff --git a/sync_fifo.v b/sync_fifo.v
+index 337082f..41a8f2a 100644
+--- a/sync_fifo.v
++++ b/sync_fifo.v
+@@ -1,8 +1,6 @@
+ //=============================================================================
+ // sync_fifo.v  -  synchronous FIFO (circular buffer) with full/empty flags
+ //
+-// Day 5 / Week 1
+-//
+ // A FIFO is a queue in hardware. One side writes, the other side reads, and
+ // data comes out in the order it went in. It is the standard way to connect
+ // two blocks that do not run at the same rate.
+@@ -25,19 +23,16 @@
+ //   both pointers wrap around at DEPTH
+ //
+ //-----------------------------------------------------------------------------
+-// THE CORE PROBLEM
++// FULL VS. EMPTY
+ //
+ // Empty means wr_ptr == rd_ptr.
+-// Full also means wr_ptr == rd_ptr, because the write pointer lapped the
+-// read pointer exactly once.
+-//
+-// Same condition, opposite meaning. This is THE classic FIFO interview
+-// question.
++// Full also means wr_ptr == rd_ptr, because the write pointer has lapped the
++// read pointer exactly once. Same condition, opposite meaning.
+ //
+-// THE FIX: make both pointers one bit wider than they need to be.
++// The fix: both pointers are one bit wider than the address needs.
+ //
+-//   equal low bits + equal MSB       -> EMPTY
+-//   equal low bits + different MSB   -> FULL   (wr lapped rd)
++//   equal address bits + equal MSB       -> EMPTY
++//   equal address bits + different MSB   -> FULL   (wr lapped rd)
+ //
+ // The extra bit counts laps. It never addresses memory.
+ //
+@@ -49,7 +44,7 @@
+ module sync_fifo #(
+     parameter WIDTH = 8,
+     parameter DEPTH = 8,                 // must be a power of two
+-    parameter PTR_W = $clog2(DEPTH)      // 3 when DEPTH is 8 - do not override
++    parameter PTR_W = $clog2(DEPTH)      // derived - do not override
+ )(
+     input  wire             clk,
+     input  wire             rst,     // synchronous, active high
+@@ -62,7 +57,7 @@ module sync_fifo #(
+ 
+     output wire             full,
+     output wire             empty,
+-    output wire [PTR_W:0]   count    // how many entries are stored
++    output wire [PTR_W:0]   count    // number of entries stored
+ );
+ 
+     // storage
+@@ -74,60 +69,55 @@ module sync_fifo #(
+ 
+ 
+     // =====================================================================
+-
+-      assign empty = ( wr_ptr[PTR_W:0] == rd_ptr[PTR_W:0] );
++    //  Status
+     //
+-   
++    // empty: same address, same lap.
++    // full:  same address, different lap - the writer is exactly one full
++    //        loop ahead of the reader.
++    // count: a plain subtraction. Modular arithmetic on the PTR_W+1-bit
++    //        pointers handles the wraparound with no special case.
+     // =====================================================================
+-    //  full
+-    //
+-      assign full = ( wr_ptr[PTR_W]     != rd_ptr[PTR_W]     ) &&
+-                    ( wr_ptr[PTR_W-1:0] == rd_ptr[PTR_W-1:0] );
+-    
+-    // Same address, different lap. The writer is exactly one full loop
+-    // ahead of the reader.
++    assign empty = ( wr_ptr[PTR_W:0] == rd_ptr[PTR_W:0] );
++
++    assign full  = ( wr_ptr[PTR_W]     != rd_ptr[PTR_W]     ) &&
++                   ( wr_ptr[PTR_W-1:0] == rd_ptr[PTR_W-1:0] );
++
++    assign count = wr_ptr - rd_ptr;
+ 
+-    // =====================================================================
+-    //  -  count
+-    //
+-      assign count = wr_ptr - rd_ptr;
+-    //
+ 
+     // =====================================================================
+-    //  read data
+-    //
+-      assign rd_data = mem[rd_ptr[PTR_W-1:0]];
+-    //
+-    // Address memory with the LOW bits of rd_ptr only. The lap bit is not
+-    // an address.
++    //  Read data
+     //
++    // Memory is addressed with the LOW bits of rd_ptr only. The lap bit is
++    // not part of the address.
++    // =====================================================================
++    assign rd_data = mem[rd_ptr[PTR_W-1:0]];
++
+ 
+     // =====================================================================
+-    //  the pointers and the memory write
+-    //
+-      always @(posedge clk) begin
+-          if (rst) begin
+-              wr_ptr <= 0;
+-              rd_ptr <= 0;
+-          end else begin
+-              if (wr_en && !full) begin
+-                  mem[wr_ptr[PTR_W-1:0]] <= wr_data;
+-                  wr_ptr <= wr_ptr + 1'b1;
+-              end
+-              if (rd_en && !empty) begin
+-                  rd_ptr <= rd_ptr + 1'b1;
+-              end
+-          end
+-      end
++    //  Pointers and memory write
+     //
+     // Two independent if statements, NOT if/else. A read and a write in the
+     // same cycle is legal and common - that is how a FIFO sustains
+-    // throughput while staying at a constant occupancy.
++    // throughput at constant occupancy.
+     //
+-    // The guards "&& !full" and "&& !empty" are the safety net: a write to
+-    // a full FIFO silently does nothing instead of destroying data, and a
+-    // read from an empty FIFO does not advance the pointer past valid data.
++    // The "&& !full" and "&& !empty" guards make a write to a full FIFO, or
++    // a read from an empty one, a safe no-op instead of corrupting data.
+     // =====================================================================
++    always @(posedge clk) begin
++        if (rst) begin
++            wr_ptr <= 0;
++            rd_ptr <= 0;
++        end else begin
++            if (wr_en && !full) begin
++                mem[wr_ptr[PTR_W-1:0]] <= wr_data;
++                wr_ptr <= wr_ptr + 1'b1;
++            end
++            if (rd_en && !empty) begin
++                rd_ptr <= rd_ptr + 1'b1;
++            end
++        end
++    end
+ 
+ endmodule
+ 
+diff --git a/traffic_light.v b/traffic_light.v
+index 22f56ea..4060eb4 100644
+--- a/traffic_light.v
++++ b/traffic_light.v
+@@ -89,8 +89,6 @@ module traffic_light #(
+     //
+     // הנורות נגזרות **רק** מהמצב. זו הגדרת Moore.
+     // ------------------------------------------------------------------
+-    // TODO 5
+-    //
+     always @(*) begin
+         case (state)
+             NS_GREEN:  begin ns_light = GREEN;  ew_light = RED;    end
+@@ -100,7 +98,6 @@ module traffic_light #(
+             default:   begin ns_light = RED;    ew_light = RED;    end
+         endcase
+     end
+-    //
+ 
+ endmodule
+ 

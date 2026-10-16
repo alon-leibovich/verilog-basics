@@ -1,8 +1,6 @@
 //=============================================================================
 // sync_fifo.v  -  synchronous FIFO (circular buffer) with full/empty flags
 //
-// Day 5 / Week 1
-//
 // A FIFO is a queue in hardware. One side writes, the other side reads, and
 // data comes out in the order it went in. It is the standard way to connect
 // two blocks that do not run at the same rate.
@@ -25,19 +23,16 @@
 //   both pointers wrap around at DEPTH
 //
 //-----------------------------------------------------------------------------
-// THE CORE PROBLEM
+// FULL VS. EMPTY
 //
 // Empty means wr_ptr == rd_ptr.
-// Full also means wr_ptr == rd_ptr, because the write pointer lapped the
-// read pointer exactly once.
+// Full also means wr_ptr == rd_ptr, because the write pointer has lapped the
+// read pointer exactly once. Same condition, opposite meaning.
 //
-// Same condition, opposite meaning. This is THE classic FIFO interview
-// question.
+// The fix: both pointers are one bit wider than the address needs.
 //
-// THE FIX: make both pointers one bit wider than they need to be.
-//
-//   equal low bits + equal MSB       -> EMPTY
-//   equal low bits + different MSB   -> FULL   (wr lapped rd)
+//   equal address bits + equal MSB       -> EMPTY
+//   equal address bits + different MSB   -> FULL   (wr lapped rd)
 //
 // The extra bit counts laps. It never addresses memory.
 //
@@ -49,7 +44,7 @@
 module sync_fifo #(
     parameter WIDTH = 8,
     parameter DEPTH = 8,                 // must be a power of two
-    parameter PTR_W = $clog2(DEPTH)      // 3 when DEPTH is 8 - do not override
+    parameter PTR_W = $clog2(DEPTH)      // derived - do not override
 )(
     input  wire             clk,
     input  wire             rst,     // synchronous, active high
@@ -62,7 +57,7 @@ module sync_fifo #(
 
     output wire             full,
     output wire             empty,
-    output wire [PTR_W:0]   count    // how many entries are stored
+    output wire [PTR_W:0]   count    // number of entries stored
 );
 
     // storage
@@ -74,60 +69,55 @@ module sync_fifo #(
 
 
     // =====================================================================
-
-      assign empty = ( wr_ptr[PTR_W:0] == rd_ptr[PTR_W:0] );
+    //  Status
     //
-   
+    // empty: same address, same lap.
+    // full:  same address, different lap - the writer is exactly one full
+    //        loop ahead of the reader.
+    // count: a plain subtraction. Modular arithmetic on the PTR_W+1-bit
+    //        pointers handles the wraparound with no special case.
     // =====================================================================
-    //  full
-    //
-      assign full = ( wr_ptr[PTR_W]     != rd_ptr[PTR_W]     ) &&
-                    ( wr_ptr[PTR_W-1:0] == rd_ptr[PTR_W-1:0] );
-    
-    // Same address, different lap. The writer is exactly one full loop
-    // ahead of the reader.
+    assign empty = ( wr_ptr[PTR_W:0] == rd_ptr[PTR_W:0] );
 
-    // =====================================================================
-    //  -  count
-    //
-      assign count = wr_ptr - rd_ptr;
-    //
+    assign full  = ( wr_ptr[PTR_W]     != rd_ptr[PTR_W]     ) &&
+                   ( wr_ptr[PTR_W-1:0] == rd_ptr[PTR_W-1:0] );
+
+    assign count = wr_ptr - rd_ptr;
+
 
     // =====================================================================
-    //  read data
+    //  Read data
     //
-      assign rd_data = mem[rd_ptr[PTR_W-1:0]];
-    //
-    // Address memory with the LOW bits of rd_ptr only. The lap bit is not
-    // an address.
-    //
+    // Memory is addressed with the LOW bits of rd_ptr only. The lap bit is
+    // not part of the address.
+    // =====================================================================
+    assign rd_data = mem[rd_ptr[PTR_W-1:0]];
+
 
     // =====================================================================
-    //  the pointers and the memory write
-    //
-      always @(posedge clk) begin
-          if (rst) begin
-              wr_ptr <= 0;
-              rd_ptr <= 0;
-          end else begin
-              if (wr_en && !full) begin
-                  mem[wr_ptr[PTR_W-1:0]] <= wr_data;
-                  wr_ptr <= wr_ptr + 1'b1;
-              end
-              if (rd_en && !empty) begin
-                  rd_ptr <= rd_ptr + 1'b1;
-              end
-          end
-      end
+    //  Pointers and memory write
     //
     // Two independent if statements, NOT if/else. A read and a write in the
     // same cycle is legal and common - that is how a FIFO sustains
-    // throughput while staying at a constant occupancy.
+    // throughput at constant occupancy.
     //
-    // The guards "&& !full" and "&& !empty" are the safety net: a write to
-    // a full FIFO silently does nothing instead of destroying data, and a
-    // read from an empty FIFO does not advance the pointer past valid data.
+    // The "&& !full" and "&& !empty" guards make a write to a full FIFO, or
+    // a read from an empty one, a safe no-op instead of corrupting data.
     // =====================================================================
+    always @(posedge clk) begin
+        if (rst) begin
+            wr_ptr <= 0;
+            rd_ptr <= 0;
+        end else begin
+            if (wr_en && !full) begin
+                mem[wr_ptr[PTR_W-1:0]] <= wr_data;
+                wr_ptr <= wr_ptr + 1'b1;
+            end
+            if (rd_en && !empty) begin
+                rd_ptr <= rd_ptr + 1'b1;
+            end
+        end
+    end
 
 endmodule
 

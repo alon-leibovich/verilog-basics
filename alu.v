@@ -1,13 +1,8 @@
 //=============================================================================
 // alu.v  -  parameterized Arithmetic Logic Unit with status flags
 //
-// Day 5 / Week 1
-//
-// This is the single most important module of the week. It becomes the
-// arithmetic core of the single-cycle CPU in Week 3. Do not throw it away.
-//
-// It reuses ripple_carry_adder from Day 2 as a sub-module: one adder handles
-// both ADD and SUB, because subtraction is addition of the two's complement.
+// Reuses ripple_carry_adder (Day 2) as a sub-module: one adder handles both
+// ADD and SUB, because subtraction is addition of the two's complement.
 //
 //-----------------------------------------------------------------------------
 // OPERATION TABLE
@@ -70,97 +65,87 @@ module alu #(
 
 
     // =====================================================================
-
-      assign sub_mode = (op == OP_SUB) | (op == OP_SLT);
+    //  Subtract mode
     //
-
+    // SLT also subtracts: a < b is decided from the sign of a - b.
     // =====================================================================
-    // TODO 2  -  two's complement trick
-    //
-      assign b_eff = b ^ {N{sub_mode}};  // invert b when subtracting;t
-    //
-    //   a - b  ==  a + (~b) + 1
-    //
-    // So: invert every bit of b when subtracting, and feed 1 into the
-    // adder's carry-in. When adding, pass b through unchanged.
-    //
-    // Hint: {N{sub_mode}} replicates sub_mode into an N-bit mask.
-    //       XOR with all-ones inverts; XOR with all-zeros passes through.
-    // =====================================================================
+    assign sub_mode = (op == OP_SUB) | (op == OP_SLT);
 
 
     // =====================================================================
+    //  Two's complement:  a - b  ==  a + (~b) + 1
+    //
+    // b is inverted conditionally: XOR with an all-ones mask inverts it,
+    // XOR with all-zeros passes it through. The "+1" costs nothing - it
+    // enters through the adder's carry-in.
+    // =====================================================================
+    assign b_eff = b ^ {N{sub_mode}};
 
-      ripple_carry_adder #( .N(N) ) u_add (
-          .a    ( a ),
-          .b    ( b_eff ),
-          .cin  ( sub_mode ), // 1 when subtracting, 0 when adding
-          .sum  ( sum ),
-          .cout ( cout )
-      );
-
+    ripple_carry_adder #( .N(N) ) u_add (
+        .a    ( a        ),
+        .b    ( b_eff    ),
+        .cin  ( sub_mode ),   // 1 when subtracting, 0 when adding
+        .sum  ( sum      ),
+        .cout ( cout     )
+    );
 
 
     // =====================================================================
-  
+    //  Signed overflow
     //
-    assign ovf =  a[N-1] == b_eff[N-1] && sum[N-1] != a[N-1];
-    //
-    // Signed overflow happens when two operands with the SAME sign produce
-    // a result with a DIFFERENT sign. Adding two positives cannot give a
-    // negative; adding two negatives cannot give a positive.
- 
+    // Two operands with the SAME sign produce a result with a DIFFERENT
+    // sign. Adding two positives cannot give a negative, and adding two
+    // negatives cannot give a positive. b_eff is used so the same check
+    // covers subtraction.
     // =====================================================================
+    assign ovf = (a[N-1] == b_eff[N-1]) && (sum[N-1] != a[N-1]);
 
-      assign slt_bit = sum[N-1] ^ ovf ; ;
+
+    // =====================================================================
+    //  Set-less-than (signed)
     //
     // After computing a - b:
     //   - with no overflow, a < b  <=>  the result is negative
-    //   - with overflow, the sign bit lies, so the answer flips
-  
-    // This is exactly how MIPS implements slt. Worth remembering - it is a
-    // classic interview question.
+    //   - with overflow, the sign bit is wrong, so the answer flips
+    // This is how MIPS implements slt, with no separate comparator.
     // =====================================================================
+    assign slt_bit = sum[N-1] ^ ovf;
 
 
     // =====================================================================
-    //   -  the result multiplexer
+    //  Result multiplexer
     //
-      always @(*) begin
-          case (op)
-              OP_ADD, OP_SUB: result = sum;
-              OP_AND:         result = a & b;
-              OP_OR:          result = a | b;
-              OP_XOR:         result = a ^ b;
-              OP_SLT:         result = { {N-1{1'b0}}, slt_bit };
-              OP_SLL:         result = a << b[2:0];
-              OP_SRL:         result = a >> b[2:0];
-              default:        result = {N{1'b0}};
-          endcase
-      end
-
-    // The shift amount is b[2:0], the low 3 bits. Same idea as the 5-bit
-    // shamt field in MIPS for 32-bit words.
+    // The shift amount is b[2:0], enough for an 8-bit word - the same idea
+    // as the 5-bit shamt field in MIPS for 32-bit words.
     // =====================================================================
+    always @(*) begin
+        case (op)
+            OP_ADD, OP_SUB: result = sum;
+            OP_AND:         result = a & b;
+            OP_OR:          result = a | b;
+            OP_XOR:         result = a ^ b;
+            OP_SLT:         result = { {N-1{1'b0}}, slt_bit };
+            OP_SLL:         result = a << b[2:0];
+            OP_SRL:         result = a >> b[2:0];
+            default:        result = {N{1'b0}};
+        endcase
+    end
 
 
-    //  the flags
-    //
-      assign is_arith = (op == OP_ADD) || (op == OP_SUB);
-    //
-      assign zero     = ~|result ;      // is result all zeros?
-      assign negative = result[N-1] ;      // the MSB of result
-      assign carry    = is_arith ? cout : 1'b0;
-      assign overflow = is_arith ? ovf  : 1'b0;
-    //
-    // For zero, a reduction operator is the cleanest form:
-    //     |result   is 1 if ANY bit is set
-    // so NOT of that is "all bits are zero".
-    //
-    // carry and overflow are meaningless for AND / OR / XOR / shifts, so we
-    // force them low instead of leaking whatever the adder happened to do.
-    // Defined behaviour beats accidental behaviour.
     // =====================================================================
+    //  Flags
+    //
+    // zero uses a reduction OR: |result is 1 if any bit is set.
+    // carry and overflow are meaningless for logic and shift operations,
+    // so they are forced low instead of exposing whatever the adder
+    // happened to compute. Defined behaviour beats accidental behaviour.
+    // =====================================================================
+    assign is_arith = (op == OP_ADD) || (op == OP_SUB);
+
+    assign zero     = ~|result;
+    assign negative = result[N-1];
+    assign carry    = is_arith ? cout : 1'b0;
+    assign overflow = is_arith ? ovf  : 1'b0;
 
 endmodule
 

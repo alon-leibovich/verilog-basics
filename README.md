@@ -1,7 +1,8 @@
 # verilog-basics
 
 Digital design fundamentals in Verilog-2001 — combinational and sequential building
-blocks, each written from scratch and verified with a self-checking testbench.
+blocks, from gates up to an ALU and a FIFO. From Day 2 on, every module is verified with a
+self-checking testbench against an independent reference model.
 
 Simulated with Icarus Verilog (`iverilog` + `vvp`), waveforms inspected in a VCD viewer.
 
@@ -52,21 +53,12 @@ stay clear of the active edge and avoid races between driving and sampling.
 
 ![Synchronous vs asynchronous reset — the short reset pulse between clock edges](sync_vs_async_reset.png)
 
-## Running
-
-```bash
-make all        # compile + simulate everything
-make day2       # combinational blocks only
-make day3       # sequential blocks only
-make counter    # a single module
-```
-
-## Design notes
+### Design notes
 
 - Ripple-carry delay grows linearly with N — the carry chain is the critical path.
   Faster adders (carry-lookahead, carry-select) trade area for delay using the
   generate/propagate formulation `c[i+1] = g[i] | (p[i] & c[i])`.
-  The adder is reused as the arithmetic core of the ALU and of the single-cycle CPU project.
+  The adder is reused as the arithmetic core of the ALU (Day 5).
 - Every clocked block uses non-blocking assignment (`<=`); every combinational block uses
   blocking (`=`). Mixing them changes the synthesized hardware without any compiler warning.
 - Asynchronous reset is asserted immediately but must be de-asserted synchronously in real
@@ -74,10 +66,6 @@ make counter    # a single module
 - `tick` is combinational rather than registered, so it lines up with the count value that
   produces it instead of lagging a cycle behind.
 - Ports are connected by name, never by position.
-
-## Tools
-
-`Icarus Verilog` · `VCD waveform viewer` · `make` · `Git`
 
 ## Day 4 — Finite State Machines
 
@@ -158,3 +146,24 @@ about: `8 operations × 256 × 256`, no sampling and no assumptions.
   cycle is the normal case for a FIFO under load; using `else` would halve the throughput.
 
 ![FIFO full: writes are ignored while count stays at 8](fifo_full_blocking.png)
+
+## Running
+
+```bash
+make all        # compile and simulate everything
+make day5       # one day's modules (day1 ... day5)
+make alu        # a single module
+make clean      # remove build artifacts
+```
+
+## Tools
+
+`Icarus Verilog` · `VCD waveform viewer` · `make` · `Git`
+
+## Roadmap
+
+Planned next steps, building on the modules above:
+
+- [ ] Register file and instruction memory
+- [ ] Single-cycle RISC-V (RV32I subset) CPU, using the ALU as its arithmetic core
+- [ ] Five-stage pipelined version with forwarding and hazard detection

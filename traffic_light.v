@@ -89,8 +89,6 @@ module traffic_light #(
     //
     // הנורות נגזרות **רק** מהמצב. זו הגדרת Moore.
     // ------------------------------------------------------------------
-    // TODO 5
-    //
     always @(*) begin
         case (state)
             NS_GREEN:  begin ns_light = GREEN;  ew_light = RED;    end
@@ -100,7 +98,6 @@ module traffic_light #(
             default:   begin ns_light = RED;    ew_light = RED;    end
         endcase
     end
-    //
 
 endmodule
 
